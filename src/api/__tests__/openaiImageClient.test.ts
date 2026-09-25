@@ -101,6 +101,41 @@ describe('openaiImageClient', () => {
       }
     })
 
+    it('should send GPT image edit options for mask, fidelity, and extra images', async () => {
+      mockEdit.mockResolvedValue({
+        data: [{ b64_json: PNG_BYTES.toString('base64') }],
+      })
+      const clientResult = createOpenAIImageClient(testConfig)
+      if (!clientResult.success) {
+        throw new Error('client')
+      }
+      const png = PNG_BYTES.toString('base64')
+      const result = await clientResult.data.generateImage({
+        prompt: 'Replace the masked area',
+        inputImage: png,
+        inputImageMimeType: 'image/png',
+        inputImages: [{ data: png, mimeType: 'image/png' }],
+        maskImage: png,
+        inputFidelity: 'high',
+        background: 'transparent',
+        imageCount: 2,
+        outputFormat: 'png',
+      })
+
+      expect(result.success).toBe(true)
+      expect(mockEdit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gpt-image-2.5-flare',
+          n: 2,
+          background: 'transparent',
+          input_fidelity: 'high',
+          output_format: 'png',
+        }),
+        {}
+      )
+      expect(mockToFile).toHaveBeenCalledTimes(3)
+    })
+
     it('should edit image successfully with input image data', async () => {
       mockEdit.mockResolvedValue({
         data: [
@@ -124,7 +159,7 @@ describe('openaiImageClient', () => {
       })
 
       expect(result.success).toBe(true)
-      expect(mockToFile).toHaveBeenCalledWith(Buffer.from('input-image-data'), 'input.png', {
+      expect(mockToFile).toHaveBeenCalledWith(Buffer.from('input-image-data'), 'input-0.png', {
         type: 'image/png',
       })
       expect(expectDefined(mockEdit.mock.calls[0], 'images.edit call')[0]).toEqual({

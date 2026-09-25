@@ -8,45 +8,62 @@ import type { McpToolResponse } from '../types/mcp.js'
 import { AuthHandler } from './authHandler.js'
 
 async function withSavedImage(result: McpToolResponse): Promise<McpToolResponse['content']> {
-  const text = result.content[0]?.text
-  if (!text || result.isError) {
+  if (result.isError) {
     return result.content
   }
 
-  try {
-    const payload: unknown = JSON.parse(text)
-    if (
-      typeof payload !== 'object' ||
-      payload === null ||
-      !('resource' in payload) ||
-      typeof payload.resource !== 'object' ||
-      payload.resource === null ||
-      !('uri' in payload.resource) ||
-      typeof payload.resource.uri !== 'string' ||
-      !('mimeType' in payload.resource) ||
-      typeof payload.resource.mimeType !== 'string'
-    ) {
-      return result.content
+  const embedded: McpToolResponse['content'] = []
+  for (const item of result.content) {
+    const image = await embedSavedFile(item.text)
+    if (image) {
+      embedded.push(image)
     }
-
-    const filePath = payload.resource.uri.startsWith('file://')
-      ? decodeURIComponent(new URL(payload.resource.uri).pathname)
-      : payload.resource.uri
-    const bytes = await readFile(filePath)
-    return [
-      ...result.content,
-      {
-        type: 'text',
-        text: JSON.stringify({
-          type: 'image',
-          mimeType: payload.resource.mimeType,
-          data: bytes.toString('base64'),
-        }),
-      },
-    ]
-  } catch {
-    return result.content
   }
+  return embedded.length === 0 ? result.content : [...result.content, ...embedded]
+}
+
+async function embedSavedFile(
+  text: string
+): Promise<McpToolResponse['content'][number] | undefined> {
+  try {
+    const resource = readSavedResource(text)
+    if (!resource) {
+      return undefined
+    }
+    const bytes = await readFile(filePathFromUri(resource.uri))
+    return {
+      type: 'text',
+      text: JSON.stringify({
+        type: 'image',
+        mimeType: resource.mimeType,
+        data: bytes.toString('base64'),
+      }),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function readSavedResource(text: string): { uri: string; mimeType: string } | undefined {
+  const payload: unknown = JSON.parse(text)
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    !('resource' in payload) ||
+    typeof payload.resource !== 'object' ||
+    payload.resource === null ||
+    !('uri' in payload.resource) ||
+    typeof payload.resource.uri !== 'string' ||
+    !('mimeType' in payload.resource) ||
+    typeof payload.resource.mimeType !== 'string'
+  ) {
+    return undefined
+  }
+  return { uri: payload.resource.uri, mimeType: payload.resource.mimeType }
+}
+
+function filePathFromUri(uri: string): string {
+  return uri.startsWith('file://') ? decodeURIComponent(new URL(uri).pathname) : uri
 }
 
 function createImageServer(): McpServer {
@@ -73,6 +90,17 @@ function createImageServer(): McpServer {
         imageSize: z.string().optional(),
         purpose: z.string().optional(),
         quality: z.string().optional(),
+        background: z.enum(['transparent', 'opaque', 'auto']).optional(),
+        inputFidelity: z.enum(['high', 'low']).optional(),
+        moderation: z.enum(['low', 'auto']).optional(),
+        outputFormat: z.enum(['png', 'jpeg', 'webp']).optional(),
+        outputCompression: z.number().int().min(0).max(100).optional(),
+        imageCount: z.number().int().min(1).max(10).optional(),
+        maskImage: z.string().optional(),
+        inputImages: z
+          .array(z.object({ data: z.string(), mimeType: z.string().optional() }))
+          .max(16)
+          .optional(),
       },
     },
     async (args) => {

@@ -1,4 +1,14 @@
-import type { AspectRatio, ImageOutputFormat, ImageQuality, ImageSize } from '../types/mcp.js'
+import type {
+  AspectRatio,
+  ImageOutputFormat,
+  ImageQuality,
+  ImageSize,
+  OpenAIBackground,
+  OpenAIInputFidelity,
+  OpenAIInputImage,
+  OpenAIModeration,
+  OpenAIOutputFormat,
+} from '../types/mcp.js'
 import type { Result } from '../types/result.js'
 import type { GeminiAPIError, ImageAPIError, NetworkError } from '../utils/errors.js'
 
@@ -24,10 +34,19 @@ export interface ImageApiParams {
   useGoogleSearch?: boolean
   preferredOutputFormat?: ImageOutputFormat
   quality?: ImageQuality
+  background?: OpenAIBackground
+  inputFidelity?: OpenAIInputFidelity
+  moderation?: OpenAIModeration
+  outputCompression?: number
+  imageCount?: number
+  outputFormat?: OpenAIOutputFormat
+  maskImage?: string
+  inputImages?: OpenAIInputImage[]
 }
 
 export interface GeneratedImageResult {
   imageData: Buffer
+  extraImageData?: Buffer[]
   metadata: ImageGenerationMetadata
 }
 

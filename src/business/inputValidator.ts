@@ -6,12 +6,21 @@ import type {
   ImageProvider,
   ImageQuality,
   ImageSize,
+  OpenAIBackground,
+  OpenAIInputFidelity,
+  OpenAIInputImage,
+  OpenAIModeration,
+  OpenAIOutputFormat,
 } from '../types/mcp.js'
 import {
   ASPECT_RATIO_VALUES,
   IMAGE_PROVIDER_VALUES,
   IMAGE_QUALITY_VALUES,
   IMAGE_SIZE_VALUES,
+  OPENAI_BACKGROUND_VALUES,
+  OPENAI_INPUT_FIDELITY_VALUES,
+  OPENAI_MODERATION_VALUES,
+  OPENAI_OUTPUT_FORMAT_VALUES,
 } from '../types/mcp.js'
 import type { Result } from '../types/result.js'
 import { Err, Ok } from '../types/result.js'
@@ -353,6 +362,11 @@ export function validateGenerateImageParams(
     return Err(enumFieldsResult.error)
   }
 
+  const openAIOptions = readOpenAIImageOptions(input)
+  if (!openAIOptions.success) {
+    return Err(openAIOptions.error)
+  }
+
   const params: GenerateImageParams = { prompt: promptResult.data, ...enumFieldsResult.data }
   assignOptional(params, 'fileName', readOptionalString(input, 'fileName'))
   assignOptional(params, 'inputImagePath', inputImagePath)
@@ -362,6 +376,209 @@ export function validateGenerateImageParams(
   for (const { name } of OPTIONAL_BOOLEAN_FIELDS) {
     assignOptional(params, name, readOptionalBoolean(input, name))
   }
+  assignOptional(params, 'background', openAIOptions.data.background)
+  assignOptional(params, 'inputFidelity', openAIOptions.data.inputFidelity)
+  assignOptional(params, 'moderation', openAIOptions.data.moderation)
+  assignOptional(params, 'outputCompression', openAIOptions.data.outputCompression)
+  assignOptional(params, 'imageCount', openAIOptions.data.imageCount)
+  assignOptional(params, 'outputFormat', openAIOptions.data.outputFormat)
+  assignOptional(params, 'maskImage', openAIOptions.data.maskImage)
+  assignOptional(params, 'maskImagePath', openAIOptions.data.maskImagePath)
+  assignOptional(params, 'inputImages', openAIOptions.data.inputImages)
 
   return Ok(params)
+}
+
+const MAX_OPENAI_INPUT_IMAGES = 16
+
+function readEnumOption<T extends string>(
+  input: Record<string, unknown>,
+  field: string,
+  allowed: readonly T[]
+): Result<T | undefined, InputValidationError> {
+  const value = input[field]
+  if (value === undefined) {
+    return Ok(undefined)
+  }
+  if (typeof value !== 'string' || !isMemberOf(allowed, value)) {
+    return Err(
+      new InputValidationError(
+        `Invalid ${field}: ${String(value)}`,
+        `Use one of: ${allowed.join(', ')}`
+      )
+    )
+  }
+  return Ok(value)
+}
+
+function readBoundedInteger(
+  input: Record<string, unknown>,
+  field: string,
+  min: number,
+  max: number
+): Result<number | undefined, InputValidationError> {
+  const value = input[field]
+  if (value === undefined) {
+    return Ok(undefined)
+  }
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+    return Err(
+      new InputValidationError(
+        `${field} must be an integer from ${min} to ${max}`,
+        `Set ${field} between ${min} and ${max}, or omit it`
+      )
+    )
+  }
+  return Ok(value)
+}
+
+function readOpenAIImageOptions(
+  input: Record<string, unknown>
+): Result<
+  Pick<
+    GenerateImageParams,
+    | 'background'
+    | 'inputFidelity'
+    | 'moderation'
+    | 'outputCompression'
+    | 'imageCount'
+    | 'outputFormat'
+    | 'maskImage'
+    | 'maskImagePath'
+    | 'inputImages'
+  >,
+  InputValidationError
+> {
+  const background = readEnumOption<OpenAIBackground>(input, 'background', OPENAI_BACKGROUND_VALUES)
+  if (!background.success) {
+    return background
+  }
+  const inputFidelity = readEnumOption<OpenAIInputFidelity>(
+    input,
+    'inputFidelity',
+    OPENAI_INPUT_FIDELITY_VALUES
+  )
+  if (!inputFidelity.success) {
+    return inputFidelity
+  }
+  const moderation = readEnumOption<OpenAIModeration>(input, 'moderation', OPENAI_MODERATION_VALUES)
+  if (!moderation.success) {
+    return moderation
+  }
+  const outputFormat = readEnumOption<OpenAIOutputFormat>(
+    input,
+    'outputFormat',
+    OPENAI_OUTPUT_FORMAT_VALUES
+  )
+  if (!outputFormat.success) {
+    return outputFormat
+  }
+  const outputCompression = readBoundedInteger(input, 'outputCompression', 0, 100)
+  if (!outputCompression.success) {
+    return outputCompression
+  }
+  const imageCount = readBoundedInteger(input, 'imageCount', 1, 10)
+  if (!imageCount.success) {
+    return imageCount
+  }
+
+  const mask = readMaskOptions(input)
+  if (!mask.success) {
+    return mask
+  }
+
+  const inputImages = readInputImages(input)
+  if (!inputImages.success) {
+    return inputImages
+  }
+
+  return Ok({
+    ...(background.data !== undefined && { background: background.data }),
+    ...(inputFidelity.data !== undefined && { inputFidelity: inputFidelity.data }),
+    ...(moderation.data !== undefined && { moderation: moderation.data }),
+    ...(outputFormat.data !== undefined && { outputFormat: outputFormat.data }),
+    ...(outputCompression.data !== undefined && { outputCompression: outputCompression.data }),
+    ...(imageCount.data !== undefined && { imageCount: imageCount.data }),
+    ...mask.data,
+    ...(inputImages.data !== undefined && { inputImages: inputImages.data }),
+  })
+}
+
+function readMaskOptions(
+  input: Record<string, unknown>
+): Result<Pick<GenerateImageParams, 'maskImage' | 'maskImagePath'>, InputValidationError> {
+  const maskImage = readOptionalString(input, 'maskImage')
+  const maskImagePath = readOptionalString(input, 'maskImagePath')
+  if (input['maskImage'] !== undefined && typeof input['maskImage'] !== 'string') {
+    return Err(new InputValidationError('maskImage must be a string', 'Provide a base64 PNG mask'))
+  }
+  if (input['maskImagePath'] !== undefined && typeof input['maskImagePath'] !== 'string') {
+    return Err(
+      new InputValidationError('maskImagePath must be a string', 'Provide a path to a PNG mask')
+    )
+  }
+  if (maskImage) {
+    const maskResult = validateBase64Image(maskImage, 'image/png')
+    if (!maskResult.success) {
+      return Err(maskResult.error)
+    }
+  }
+  if (maskImagePath) {
+    const maskPathResult = validateImagePath(maskImagePath)
+    if (!maskPathResult.success) {
+      return Err(maskPathResult.error)
+    }
+  }
+
+  return Ok({
+    ...(maskImage !== undefined && { maskImage }),
+    ...(maskImagePath !== undefined && { maskImagePath }),
+  })
+}
+
+function readInputImages(
+  input: Record<string, unknown>
+): Result<OpenAIInputImage[] | undefined, InputValidationError> {
+  const value = input['inputImages']
+  if (value === undefined) {
+    return Ok(undefined)
+  }
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_OPENAI_INPUT_IMAGES) {
+    return Err(
+      new InputValidationError(
+        `inputImages must contain 1 to ${MAX_OPENAI_INPUT_IMAGES} images`,
+        'Provide an array of { data, mimeType } image objects'
+      )
+    )
+  }
+
+  const images: OpenAIInputImage[] = []
+  for (const item of value) {
+    if (!isPlainObject(item) || typeof item['data'] !== 'string') {
+      return Err(
+        new InputValidationError(
+          'Each inputImages item must include base64 data',
+          'Use { data: "<base64>", mimeType: "image/png" }'
+        )
+      )
+    }
+    const mimeType = typeof item['mimeType'] === 'string' ? item['mimeType'] : undefined
+    const decoded = validateBase64Image(item['data'], mimeType)
+    if (!decoded.success) {
+      return Err(decoded.error)
+    }
+    if (!decoded.data) {
+      return Err(
+        new InputValidationError(
+          'Each inputImages item must include base64 data',
+          'Use { data: "<base64>", mimeType: "image/png" }'
+        )
+      )
+    }
+    images.push({
+      data: decoded.data.toString('base64'),
+      ...(mimeType !== undefined && { mimeType }),
+    })
+  }
+  return Ok(images)
 }

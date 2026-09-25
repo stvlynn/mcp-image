@@ -6,8 +6,8 @@ import {
   ListToolsRequestSchema,
   type ListToolsResult,
 } from '@modelcontextprotocol/sdk/types.js'
-import packageJson from '../../package.json'
-import type { ImageApiParams, ImageClient } from '../api/imageClient.js'
+import packageJson from '../../package.json' with { type: 'json' }
+import type { GeneratedImageResult, ImageApiParams, ImageClient } from '../api/imageClient.js'
 import { generateFileName, readInputImage, saveImage } from '../business/fileManager.js'
 import { validateBase64Image, validateGenerateImageParams } from '../business/inputValidator.js'
 import { buildErrorResponse, buildSuccessResponse } from '../business/responseBuilder.js'
@@ -28,6 +28,10 @@ import {
   IMAGE_PROVIDER_VALUES,
   IMAGE_QUALITY_VALUES,
   IMAGE_SIZE_VALUES,
+  OPENAI_BACKGROUND_VALUES,
+  OPENAI_INPUT_FIDELITY_VALUES,
+  OPENAI_MODERATION_VALUES,
+  OPENAI_OUTPUT_FORMAT_VALUES,
 } from '../types/mcp.js'
 import { unwrapOrThrow } from '../types/result.js'
 import { type Config, getConfig, validateProviderCredentials } from '../utils/config.js'
@@ -59,6 +63,70 @@ interface ProviderClients {
 }
 
 type ImageOptions = Omit<ImageApiParams, 'prompt'>
+
+function rejectUnsupportedOpenAIOptions(
+  providerName: ImageProvider,
+  params: GenerateImageParams
+): void {
+  if (providerName !== 'openai') {
+    assertNoOpenAIOnlyOptions(params)
+  }
+}
+
+async function saveGeneratedImages(
+  generatedImage: GeneratedImageResult,
+  fileName: string,
+  outputDir: string,
+  securityManager: SecurityManager
+): Promise<McpToolResponse> {
+  const images = [generatedImage.imageData, ...(generatedImage.extraImageData ?? [])]
+  const content: McpToolResponse['content'] = []
+  for (const [index, imageData] of images.entries()) {
+    const indexedName = images.length === 1 ? fileName : indexedFileName(fileName, index)
+    const outputPath = path.join(outputDir, indexedName)
+    const sanitizedPath = unwrapOrThrow(securityManager.sanitizeFilePath(outputPath))
+    const savedPath = unwrapOrThrow(await saveImage(imageData, sanitizedPath))
+    content.push(...buildSuccessResponse(generatedImage, savedPath).content)
+  }
+  return { content, isError: false }
+}
+
+function assertNoOpenAIOnlyOptions(params: GenerateImageParams): void {
+  const used = [
+    params.background,
+    params.inputFidelity,
+    params.moderation,
+    params.outputCompression,
+    params.imageCount,
+    params.outputFormat,
+    params.maskImage,
+    params.maskImagePath,
+    params.inputImages,
+  ].some((value) => value !== undefined)
+  if (used) {
+    throw new Error(
+      'background, inputFidelity, moderation, outputCompression, imageCount, outputFormat, maskImage, and inputImages are supported only when provider is openai'
+    )
+  }
+}
+
+async function loadMaskImage(params: GenerateImageParams): Promise<string | undefined> {
+  if (params.maskImagePath) {
+    const mask = await readInputImage(params.maskImagePath)
+    return mask.data.toString('base64')
+  }
+  if (!params.maskImage) {
+    return undefined
+  }
+  const decoded = unwrapOrThrow(validateBase64Image(params.maskImage, 'image/png'))
+  return decoded?.toString('base64')
+}
+
+function indexedFileName(fileName: string, index: number): string {
+  const extension = path.extname(fileName)
+  const stem = extension ? fileName.slice(0, -extension.length) : fileName
+  return `${stem}-${index + 1}${extension}`
+}
 
 /** Load an edit source from a local path or an inline base64 payload. */
 async function loadInputImage(
@@ -101,6 +169,13 @@ function buildImageOptions(
     ...(params.useGoogleSearch !== undefined && { useGoogleSearch: params.useGoogleSearch }),
     ...(preferredOutputFormat && { preferredOutputFormat }),
     ...(params.quality !== undefined && { quality: params.quality }),
+    ...(params.background && { background: params.background }),
+    ...(params.inputFidelity && { inputFidelity: params.inputFidelity }),
+    ...(params.moderation && { moderation: params.moderation }),
+    ...(params.outputCompression !== undefined && { outputCompression: params.outputCompression }),
+    ...(params.imageCount !== undefined && { imageCount: params.imageCount }),
+    ...(params.outputFormat && { outputFormat: params.outputFormat }),
+    ...(params.inputImages && { inputImages: params.inputImages }),
   } satisfies ImageOptions
 }
 
@@ -233,6 +308,62 @@ export class MCPServerImpl {
                 description:
                   'Set only when the user requests a specific image provider; otherwise omit to use the server default. The provider must have its API key configured on the server.',
                 enum: [...IMAGE_PROVIDER_VALUES],
+              },
+              background: {
+                type: 'string' as const,
+                description:
+                  'OpenAI only. transparent, opaque, or auto. Transparent output requires PNG or WebP.',
+                enum: [...OPENAI_BACKGROUND_VALUES],
+              },
+              inputFidelity: {
+                type: 'string' as const,
+                description:
+                  'OpenAI edits only. high keeps facial features and style closer to the input images. low is the default.',
+                enum: [...OPENAI_INPUT_FIDELITY_VALUES],
+              },
+              moderation: {
+                type: 'string' as const,
+                description: 'OpenAI generation only. low or auto.',
+                enum: [...OPENAI_MODERATION_VALUES],
+              },
+              outputFormat: {
+                type: 'string' as const,
+                description: 'OpenAI only. png, jpeg, or webp. Overrides the filename extension.',
+                enum: [...OPENAI_OUTPUT_FORMAT_VALUES],
+              },
+              outputCompression: {
+                type: 'integer' as const,
+                description: 'OpenAI JPEG or WebP compression from 0 to 100.',
+                minimum: 0,
+                maximum: 100,
+              },
+              imageCount: {
+                type: 'integer' as const,
+                description: 'OpenAI only. Number of images to return, from 1 to 10.',
+                minimum: 1,
+                maximum: 10,
+              },
+              maskImage: {
+                type: 'string' as const,
+                description:
+                  'OpenAI edits only. Base64 PNG mask. Transparent pixels mark the area to edit.',
+              },
+              maskImagePath: {
+                type: 'string' as const,
+                description: 'OpenAI edits only. Absolute path to a PNG mask.',
+              },
+              inputImages: {
+                type: 'array' as const,
+                description:
+                  'OpenAI edits only. Up to 16 reference images, including inputImage when both are set. Each item is { data, mimeType }.',
+                items: {
+                  type: 'object' as const,
+                  properties: {
+                    data: { type: 'string' as const },
+                    mimeType: { type: 'string' as const },
+                  },
+                  required: ['data'],
+                },
               },
             },
             required: ['prompt'],
@@ -374,18 +505,24 @@ export class MCPServerImpl {
       provider
     )
 
+    rejectUnsupportedOpenAIOptions(providerName, params)
+
     const inputImage = await loadInputImage(params)
     const inputImageData = inputImage.data
     const inputImageMimeType = inputImage.mimeType
+    const maskImage = await loadMaskImage(params)
 
-    const imageOptions = buildImageOptions(
-      params,
-      {
-        ...(inputImageData && { data: inputImageData }),
-        ...(inputImageMimeType && { mimeType: inputImageMimeType }),
-      },
-      preferredOutputFormat
-    )
+    const imageOptions = {
+      ...buildImageOptions(
+        params,
+        {
+          ...(inputImageData && { data: inputImageData }),
+          ...(inputImageMimeType && { mimeType: inputImageMimeType }),
+        },
+        preferredOutputFormat
+      ),
+      ...(maskImage && { maskImage }),
+    }
 
     provider.validateImageOptions?.(imageOptions, config)
     signal?.throwIfAborted()
@@ -426,12 +563,12 @@ export class MCPServerImpl {
         }
       )
     }
-    const outputPath = path.join(config.imageOutputDir, fileName)
-
-    const sanitizedPath = unwrapOrThrow(this.securityManager.sanitizeFilePath(outputPath))
-    const savedPath = unwrapOrThrow(await saveImage(generatedImage.imageData, sanitizedPath))
-
-    return buildSuccessResponse(generatedImage, savedPath)
+    return saveGeneratedImages(
+      generatedImage,
+      fileName,
+      config.imageOutputDir,
+      this.securityManager
+    )
   }
 
   public initialize(): Server {

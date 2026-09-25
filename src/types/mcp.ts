@@ -23,6 +23,23 @@ export type ImageSize = (typeof IMAGE_SIZE_VALUES)[number]
 
 export type ImageOutputFormat = 'png' | 'jpeg'
 
+export const OPENAI_BACKGROUND_VALUES = ['transparent', 'opaque', 'auto'] as const
+export type OpenAIBackground = (typeof OPENAI_BACKGROUND_VALUES)[number]
+
+export const OPENAI_INPUT_FIDELITY_VALUES = ['high', 'low'] as const
+export type OpenAIInputFidelity = (typeof OPENAI_INPUT_FIDELITY_VALUES)[number]
+
+export const OPENAI_MODERATION_VALUES = ['low', 'auto'] as const
+export type OpenAIModeration = (typeof OPENAI_MODERATION_VALUES)[number]
+
+export const OPENAI_OUTPUT_FORMAT_VALUES = ['png', 'jpeg', 'webp'] as const
+export type OpenAIOutputFormat = (typeof OPENAI_OUTPUT_FORMAT_VALUES)[number]
+
+export interface OpenAIInputImage {
+  data: string
+  mimeType?: string
+}
+
 export const IMAGE_QUALITY_VALUES = ['fast', 'balanced', 'quality'] as const
 
 export type ImageQuality = (typeof IMAGE_QUALITY_VALUES)[number]
@@ -51,6 +68,15 @@ export interface GenerateImageParams {
   purpose?: string
   quality?: ImageQuality
   provider?: ImageProvider
+  background?: OpenAIBackground
+  inputFidelity?: OpenAIInputFidelity
+  moderation?: OpenAIModeration
+  outputCompression?: number
+  imageCount?: number
+  outputFormat?: OpenAIOutputFormat
+  maskImage?: string
+  maskImagePath?: string
+  inputImages?: OpenAIInputImage[]
 }
 
 export interface MCPServerConfig {

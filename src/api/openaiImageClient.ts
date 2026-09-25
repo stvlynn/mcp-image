@@ -4,7 +4,7 @@ import type {
   ImageGenerateParamsNonStreaming,
   ImagesResponse,
 } from 'openai/resources/images'
-import type { ImageOutputFormat, ImageQuality } from '../types/mcp.js'
+import type { ImageQuality } from '../types/mcp.js'
 import { ASPECT_RATIO_VALUES } from '../types/mcp.js'
 import type { Result } from '../types/result.js'
 import { Err, Ok } from '../types/result.js'
@@ -12,7 +12,6 @@ import type { Config } from '../utils/config.js'
 import { ImageAPIError, NetworkError } from '../utils/errors.js'
 import {
   DEFAULT_MIME_TYPE,
-  getMimeTypeForOutputFormat,
   matchesImageDataMimeType,
   normalizeMimeType,
 } from '../utils/mimeUtils.js'
@@ -117,6 +116,134 @@ function hasInputImage(params: ImageApiParams): params is ImageEditApiParams {
   return typeof params.inputImage === 'string' && params.inputImage.length > 0
 }
 
+function validateOpenAIRequestOptions(
+  params: ImageApiParams,
+  outputFormat: 'png' | 'jpeg' | 'webp'
+): ImageAPIError | undefined {
+  const editing = hasInputImage(params) || (params.inputImages?.length ?? 0) > 0
+  if ((params.maskImage || params.inputFidelity) && !editing) {
+    return new ImageAPIError(
+      'OpenAI mask and inputFidelity require an input image',
+      'Provide inputImage, inputImagePath, or inputImages when editing'
+    )
+  }
+  if (params.moderation && editing) {
+    return new ImageAPIError(
+      'OpenAI moderation applies to image generation, not editing',
+      'Omit moderation when sending an input image'
+    )
+  }
+  if (params.outputCompression !== undefined && outputFormat === 'png') {
+    return new ImageAPIError(
+      'OpenAI outputCompression applies to JPEG and WebP output',
+      'Set outputFormat to jpeg or webp before using outputCompression'
+    )
+  }
+  if (params.background === 'transparent' && outputFormat === 'jpeg') {
+    return new ImageAPIError(
+      'Transparent OpenAI backgrounds require PNG or WebP output',
+      'Set outputFormat to png or webp when background is transparent'
+    )
+  }
+  const imageCount = (hasInputImage(params) ? 1 : 0) + (params.inputImages?.length ?? 0)
+  if (imageCount > 16) {
+    return new ImageAPIError(
+      'OpenAI image edits accept at most 16 input images',
+      'Send no more than 16 images in inputImage and inputImages combined'
+    )
+  }
+  return undefined
+}
+
+async function uploadImage(
+  data: string,
+  mimeType: string | undefined,
+  stem: string
+): Promise<Awaited<ReturnType<typeof toFile>>> {
+  const normalized = normalizeMimeType(mimeType ?? DEFAULT_MIME_TYPE)
+  return toFile(Buffer.from(data, 'base64'), `${stem}.${mimeTypeToExtension(normalized)}`, {
+    type: normalized,
+  })
+}
+
+async function assembleGeneratedImages(
+  images: ImagesResponse['data'],
+  outputFormat: 'png' | 'jpeg' | 'webp',
+  modelName: string,
+  signal?: AbortSignal
+): Promise<Result<{ imageData: Buffer; extraImageData: Buffer[] }, ImageAPIError | NetworkError>> {
+  const imageBytes = await readAllGeneratedImages(images, signal)
+  if (!imageBytes || imageBytes.some((bytes) => !matchesOutputFormat(bytes, outputFormat))) {
+    return Err(
+      new ImageAPIError(
+        imageBytes
+          ? 'OpenAI image response did not match the requested output format'
+          : 'No image data returned from OpenAI image API',
+        {
+          provider: 'openai',
+          model: modelName,
+          stage: imageBytes ? 'image_response' : 'image_extraction',
+          suggestion: imageBytes
+            ? 'Retry the request; the provider returned unexpected image bytes'
+            : 'Retry the request or verify that the selected model returns base64 image data or an image URL',
+        }
+      )
+    )
+  }
+  const [imageData, ...extraImageData] = imageBytes
+  if (!imageData) {
+    return Err(
+      new ImageAPIError('No image data returned from OpenAI image API', {
+        provider: 'openai',
+        model: modelName,
+        stage: 'image_extraction',
+        suggestion:
+          'Retry the request or verify that the selected model returns base64 image data or an image URL',
+      })
+    )
+  }
+  return Ok({ imageData, extraImageData })
+}
+
+async function readAllGeneratedImages(
+  images: ImagesResponse['data'],
+  signal?: AbortSignal
+): Promise<Buffer[] | undefined> {
+  if (!images || images.length === 0) {
+    return undefined
+  }
+  const buffers: Buffer[] = []
+  for (const image of images) {
+    const bytes = await readGeneratedImageBytes(image, signal)
+    if (!bytes) {
+      return undefined
+    }
+    buffers.push(bytes)
+  }
+  return buffers
+}
+
+function mimeTypeForOutputFormat(format: 'png' | 'jpeg' | 'webp'): string {
+  if (format === 'jpeg') {
+    return 'image/jpeg'
+  }
+  if (format === 'webp') {
+    return 'image/webp'
+  }
+  return 'image/png'
+}
+
+function matchesOutputFormat(imageData: Buffer, format: 'png' | 'jpeg' | 'webp'): boolean {
+  if (format === 'webp') {
+    return (
+      imageData.length >= 12 &&
+      imageData.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      imageData.subarray(8, 12).toString('ascii') === 'WEBP'
+    )
+  }
+  return matchesImageDataMimeType(imageData, format === 'jpeg' ? 'image/jpeg' : 'image/png')
+}
+
 export function validateOpenAIOptions(
   params: Pick<ImageApiParams, 'useGoogleSearch' | 'aspectRatio'>
 ): Result<true, ImageAPIError> {
@@ -167,57 +294,42 @@ class OpenAIImageClientImpl implements ImageClient {
         effectiveQuality === 'quality' ? OPENAI_IMAGE_MODELS.SUNBURST : OPENAI_IMAGE_MODELS.FLARE
       const quality = mapQuality(effectiveQuality)
       const size = mapSize(params)
-      const outputFormat: ImageOutputFormat = params.preferredOutputFormat ?? 'png'
-
-      const request: OpenAIImageGenerateRequest = {
+      const outputFormat = params.outputFormat ?? params.preferredOutputFormat ?? 'png'
+      const response = await this.requestImage(params, {
         model: modelName,
         prompt: params.prompt,
-        n: 1,
+        n: params.imageCount ?? 1,
         output_format: outputFormat,
         quality,
         size,
+      })
+      if ('success' in response) {
+        return response
       }
-      const images: OpenAIImagesApi = this.client.images
-      const response = hasInputImage(params)
-        ? await this.editImage(params, request)
-        : await images.generate(request, {
-            ...(params.signal && { signal: params.signal }),
-          })
+
+      const assembled = await assembleGeneratedImages(
+        response.data,
+        outputFormat,
+        modelName,
+        params.signal
+      )
+      if (!assembled.success) {
+        return assembled
+      }
+      const { imageData, extraImageData } = assembled.data
+      const mimeType = mimeTypeForOutputFormat(outputFormat)
 
       const firstImage = response.data?.[0]
-      const imageData = await readGeneratedImageBytes(firstImage, params.signal)
-      if (!imageData) {
-        return Err(
-          new ImageAPIError('No image data returned from OpenAI image API', {
-            provider: 'openai',
-            model: modelName,
-            stage: 'image_extraction',
-            suggestion:
-              'Retry the request or verify that the selected model returns base64 image data or an image URL',
-          })
-        )
-      }
-      const mimeType = getMimeTypeForOutputFormat(outputFormat)
-      if (!matchesImageDataMimeType(imageData, mimeType)) {
-        return Err(
-          new ImageAPIError('OpenAI image response did not match the requested output format', {
-            provider: 'openai',
-            model: modelName,
-            stage: 'image_response',
-            suggestion: 'Retry the request; the provider returned unexpected image bytes',
-          })
-        )
-      }
-
       return Ok({
         imageData,
+        ...(extraImageData.length > 0 && { extraImageData }),
         metadata: {
           model: modelName,
           provider: 'openai',
           prompt: params.prompt,
           mimeType,
           timestamp: new Date(),
-          inputImageProvided: !!params.inputImage,
+          inputImageProvided: hasInputImage(params) || (params.inputImages?.length ?? 0) > 0,
           ...(firstImage?.revised_prompt && { revisedPrompt: firstImage.revised_prompt }),
         },
       })
@@ -226,20 +338,68 @@ class OpenAIImageClientImpl implements ImageClient {
     }
   }
 
+  private async requestImage(
+    params: ImageApiParams,
+    request: OpenAIImageGenerateRequest
+  ): Promise<ImagesResponse | Result<never, ImageAPIError>> {
+    const outputFormat = request.output_format ?? 'png'
+    const optionError = validateOpenAIRequestOptions(params, outputFormat)
+    if (optionError) {
+      return Err(optionError)
+    }
+    const body: OpenAIImageGenerateRequest = {
+      ...request,
+      ...(params.background && { background: params.background }),
+      ...(params.outputCompression !== undefined && {
+        output_compression: params.outputCompression,
+      }),
+    }
+    const editing = hasInputImage(params) || (params.inputImages?.length ?? 0) > 0
+    if (editing) {
+      return this.editImage(params, body)
+    }
+    const images: OpenAIImagesApi = this.client.images
+    return images.generate(
+      {
+        ...body,
+        ...(params.moderation && { moderation: params.moderation }),
+      },
+      {
+        ...(params.signal && { signal: params.signal }),
+      }
+    )
+  }
+
   private async editImage(
-    params: ImageEditApiParams,
+    params: ImageApiParams,
     request: OpenAIImageGenerateRequest
   ): Promise<ImagesResponse> {
-    const mimeType = normalizeMimeType(params.inputImageMimeType ?? DEFAULT_MIME_TYPE)
-    const inputFile = await toFile(
-      Buffer.from(params.inputImage, 'base64'),
-      `input.${mimeTypeToExtension(mimeType)}`,
-      { type: mimeType }
+    const sources = [
+      ...(hasInputImage(params)
+        ? [{ data: params.inputImage, mimeType: params.inputImageMimeType }]
+        : []),
+      ...(params.inputImages ?? []),
+    ]
+    const files = await Promise.all(
+      sources.map((source, index) => uploadImage(source.data, source.mimeType, `input-${index}`))
     )
+    const firstFile = files[0]
+    if (!firstFile) {
+      throw new Error('OpenAI image edit requires an input image')
+    }
+    const image = files.length === 1 ? firstFile : files
+    const mask = params.maskImage
+      ? await uploadImage(params.maskImage, 'image/png', 'mask')
+      : undefined
 
     const images: OpenAIImagesApi = this.client.images
     return await images.edit(
-      { ...request, image: inputFile },
+      {
+        ...request,
+        image,
+        ...(mask && { mask }),
+        ...(params.inputFidelity && { input_fidelity: params.inputFidelity }),
+      },
       {
         ...(params.signal && { signal: params.signal }),
       }
