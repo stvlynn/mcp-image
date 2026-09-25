@@ -90,11 +90,19 @@ function createImageServer(): McpServer {
   return server
 }
 
+const mcpHandler = createMcpHandler(createImageServer)
+
+const apiHandler = {
+  fetch(request: Request, env: unknown, ctx: Parameters<typeof mcpHandler>[2]): Promise<Response> {
+    return mcpHandler(request, env, ctx)
+  },
+}
+
 export default new OAuthProvider({
   authorizeEndpoint: '/authorize',
   tokenEndpoint: '/token',
   clientRegistrationEndpoint: '/register',
   apiRoute: '/mcp',
-  apiHandler: createMcpHandler(createImageServer),
+  apiHandler,
   defaultHandler: AuthHandler,
 })
