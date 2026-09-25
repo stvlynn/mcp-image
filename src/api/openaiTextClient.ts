@@ -34,6 +34,7 @@ class OpenAITextClientImpl implements TextClient {
   constructor(config: Config) {
     this.client = new OpenAI({
       apiKey: config.openaiApiKey,
+      ...(config.openaiBaseUrl ? { baseURL: config.openaiBaseUrl } : {}),
     })
   }
 

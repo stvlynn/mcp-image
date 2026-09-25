@@ -8,6 +8,7 @@ export interface Config {
   imageProvider: ImageProvider
   geminiApiKey: string
   openaiApiKey: string
+  openaiBaseUrl?: string
   arkApiKey: string
   imageOutputDir: string
   skipPromptEnhancement: boolean
@@ -123,6 +124,7 @@ export function validateConfig(config: UnvalidatedConfig): Result<Config, Config
 }
 
 export function getConfig(): Result<Config, ConfigError> {
+  const openaiBaseUrl = readEnv('OPENAI_BASE_URL')
   const config: UnvalidatedConfig = {
     imageProvider: readEnv('IMAGE_PROVIDER') || DEFAULT_CONFIG.imageProvider,
     geminiApiKey: readEnv('GEMINI_API_KEY') || '',
@@ -131,6 +133,9 @@ export function getConfig(): Result<Config, ConfigError> {
     imageOutputDir: readEnv('IMAGE_OUTPUT_DIR') || DEFAULT_CONFIG.imageOutputDir,
     skipPromptEnhancement: readEnv('SKIP_PROMPT_ENHANCEMENT') === 'true',
     imageQuality: readEnv('IMAGE_QUALITY') || 'fast',
+  }
+  if (openaiBaseUrl !== undefined) {
+    config.openaiBaseUrl = openaiBaseUrl
   }
 
   return validateConfig(config)

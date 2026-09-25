@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "mcp-image",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "IMAGE_PROVIDER": "openai",
+    "IMAGE_OUTPUT_DIR": "/tmp/mcp-image",
+    "OPENAI_BASE_URL": "https://api.tu-zi.com/v1"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "d18308b3b82144a0a7837e1c2809550c"
+    }
+  ]
+}

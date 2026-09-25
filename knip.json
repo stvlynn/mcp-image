@@ -1,5 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["bin/install-skills.js"],
+  "entry": ["bin/install-skills.js", "src/worker/index.ts"],
   "project": ["src/**/*.ts", "bin/**/*.js"]
 }

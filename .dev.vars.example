@@ -1,0 +1,4 @@
+MCP_AUTH_USERNAME=replace-with-account
+MCP_AUTH_PASSWORD=replace-with-password
+OPENAI_API_KEY=replace-with-openai-key
+OPENAI_BASE_URL=https://api.openai.com/v1

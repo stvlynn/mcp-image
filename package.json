@@ -61,19 +61,26 @@
     "check:all": "pnpm run check && pnpm run check:deps && pnpm run check:unused && pnpm run build && pnpm run test"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.10.3",
     "@google/genai": "^2.19.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "openai": "^7.8.0"
+    "@modelcontextprotocol/server": "^2.0.0",
+    "agents": "^0.24.0",
+    "hono": "^4.13.8",
+    "openai": "^7.8.0",
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
+    "@cloudflare/workers-types": "^5.20260918.1",
     "@types/node": "^22.20.1",
     "dpdm": "^4.3.0",
     "husky": "^9.1.7",
     "knip": "^6.34.0",
     "lint-staged": "^17.4.1",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.135.0"
   },
   "engines": {
     "node": ">=22"

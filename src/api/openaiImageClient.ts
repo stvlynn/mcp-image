@@ -93,6 +93,26 @@ const OPENAI_IMAGE_MODELS = {
   SUNBURST: 'gpt-image-2.5-sunburst',
 } as const
 
+async function readGeneratedImageBytes(
+  image: { b64_json?: string | null; url?: string | null } | undefined,
+  signal?: AbortSignal
+): Promise<Buffer | undefined> {
+  if (image?.b64_json) {
+    return Buffer.from(image.b64_json, 'base64')
+  }
+  if (!image?.url) {
+    return undefined
+  }
+
+  const response = await fetch(image.url, {
+    ...(signal ? { signal } : {}),
+  })
+  if (!response.ok) {
+    throw new Error(`Image URL download failed with status ${response.status}`)
+  }
+  return Buffer.from(await response.arrayBuffer())
+}
+
 function hasInputImage(params: ImageApiParams): params is ImageEditApiParams {
   return typeof params.inputImage === 'string' && params.inputImage.length > 0
 }
@@ -165,19 +185,18 @@ class OpenAIImageClientImpl implements ImageClient {
           })
 
       const firstImage = response.data?.[0]
-      if (!firstImage?.b64_json) {
+      const imageData = await readGeneratedImageBytes(firstImage, params.signal)
+      if (!imageData) {
         return Err(
           new ImageAPIError('No image data returned from OpenAI image API', {
             provider: 'openai',
             model: modelName,
             stage: 'image_extraction',
             suggestion:
-              'Retry the request or verify that the selected model returns base64 image data',
+              'Retry the request or verify that the selected model returns base64 image data or an image URL',
           })
         )
       }
-
-      const imageData = Buffer.from(firstImage.b64_json, 'base64')
       const mimeType = getMimeTypeForOutputFormat(outputFormat)
       if (!matchesImageDataMimeType(imageData, mimeType)) {
         return Err(
@@ -199,7 +218,7 @@ class OpenAIImageClientImpl implements ImageClient {
           mimeType,
           timestamp: new Date(),
           inputImageProvided: !!params.inputImage,
-          ...(firstImage.revised_prompt && { revisedPrompt: firstImage.revised_prompt }),
+          ...(firstImage?.revised_prompt && { revisedPrompt: firstImage.revised_prompt }),
         },
       })
     } catch (error) {
@@ -281,6 +300,7 @@ export function createOpenAIImageClient(config: Config): Result<ImageClient, Ima
   try {
     const client = new OpenAI({
       apiKey: config.openaiApiKey,
+      ...(config.openaiBaseUrl ? { baseURL: config.openaiBaseUrl } : {}),
     })
     return Ok(new OpenAIImageClientImpl(client, config.imageQuality))
   } catch (error) {

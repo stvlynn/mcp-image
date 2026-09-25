@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import type { ImageApiParams, ImageClient } from '../api/imageClient.js'
 import { generateFileName, readInputImage, saveImage } from '../business/fileManager.js'
-import { validateGenerateImageParams } from '../business/inputValidator.js'
+import { validateBase64Image, validateGenerateImageParams } from '../business/inputValidator.js'
 import { buildErrorResponse, buildSuccessResponse } from '../business/responseBuilder.js'
 import {
   createStructuredPromptGenerator,
@@ -72,6 +72,33 @@ interface ProviderClients {
 }
 
 type ImageOptions = Omit<ImageApiParams, 'prompt'>
+
+/** Load an edit source from a local path or an inline base64 payload. */
+async function loadInputImage(
+  params: GenerateImageParams
+): Promise<{ data?: string; mimeType?: string }> {
+  if (params.inputImagePath) {
+    const inputImage = await readInputImage(params.inputImagePath)
+    return {
+      data: inputImage.data.toString('base64'),
+      mimeType: inputImage.mimeType,
+    }
+  }
+
+  if (!params.inputImage) {
+    return {}
+  }
+
+  const decoded = unwrapOrThrow(validateBase64Image(params.inputImage, params.inputImageMimeType))
+  if (!decoded) {
+    return {}
+  }
+
+  return {
+    data: decoded.toString('base64'),
+    ...(params.inputImageMimeType ? { mimeType: params.inputImageMimeType } : {}),
+  }
+}
 
 /** Assemble the provider-facing image options from validated request params. */
 function buildImageOptions(
@@ -360,13 +387,9 @@ export class MCPServerImpl {
       provider
     )
 
-    let inputImageData: string | undefined
-    let inputImageMimeType: string | undefined
-    if (params.inputImagePath) {
-      const inputImage = await readInputImage(params.inputImagePath)
-      inputImageData = inputImage.data.toString('base64')
-      inputImageMimeType = inputImage.mimeType
-    }
+    const inputImage = await loadInputImage(params)
+    const inputImageData = inputImage.data
+    const inputImageMimeType = inputImage.mimeType
 
     const imageOptions = buildImageOptions(
       params,

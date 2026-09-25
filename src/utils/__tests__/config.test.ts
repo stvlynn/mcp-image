@@ -10,6 +10,7 @@ describe('config', () => {
     delete process.env.IMAGE_PROVIDER
     delete process.env.GEMINI_API_KEY
     delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_BASE_URL
     delete process.env.ARK_API_KEY
     delete process.env.IMAGE_OUTPUT_DIR
     delete process.env.IMAGE_QUALITY
@@ -167,6 +168,7 @@ describe('config', () => {
     it('should load OpenAI provider config from environment', () => {
       process.env.IMAGE_PROVIDER = 'openai'
       process.env.OPENAI_API_KEY = 'test-openai-api-key-12345'
+      process.env.OPENAI_BASE_URL = 'https://example.test/v1'
 
       const result = getConfig()
 
@@ -174,6 +176,7 @@ describe('config', () => {
       if (result.success) {
         expect(result.data.imageProvider).toBe('openai')
         expect(result.data.openaiApiKey).toBe('test-openai-api-key-12345')
+        expect(result.data.openaiBaseUrl).toBe('https://example.test/v1')
       }
     })
 

@@ -1,6 +1,9 @@
 allowBuilds:
   '@google/genai': true
+  core-js-pure: true
+  esbuild: true
   protobufjs: true
+  workerd: true
 
 minimumReleaseAge: 10080 # minutes
 minimumReleaseAgeStrict: true
