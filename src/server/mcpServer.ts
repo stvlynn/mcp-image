@@ -6,7 +6,7 @@ import {
   ListToolsRequestSchema,
   type ListToolsResult,
 } from '@modelcontextprotocol/sdk/types.js'
-import packageJson from '../../package.json' with { type: 'json' }
+import packageJson from '../../package.json'
 import type { ImageApiParams, ImageClient } from '../api/imageClient.js'
 import { generateFileName, readInputImage, saveImage } from '../business/fileManager.js'
 import { validateBase64Image, validateGenerateImageParams } from '../business/inputValidator.js'
