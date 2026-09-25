@@ -81,11 +81,7 @@ export class Logger {
   ]
 
   private currentTraceId?: string
-  private readonly currentSessionId: string
-
-  constructor() {
-    this.currentSessionId = Logger.generateId()
-  }
+  private currentSessionId?: string
 
   debug(context: string, message: string, metadata?: Record<string, unknown>): void {
     if (process.env['NODE_ENV'] === 'production') {
@@ -175,6 +171,9 @@ export class Logger {
   }
 
   private getCurrentSessionId(): string {
+    if (!this.currentSessionId) {
+      this.currentSessionId = Logger.generateId()
+    }
     return this.currentSessionId
   }
 }
