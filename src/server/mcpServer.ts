@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import * as path from 'node:path'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import {
@@ -7,6 +6,7 @@ import {
   ListToolsRequestSchema,
   type ListToolsResult,
 } from '@modelcontextprotocol/sdk/types.js'
+import packageJson from '../../package.json' with { type: 'json' }
 import type { ImageApiParams, ImageClient } from '../api/imageClient.js'
 import { generateFileName, readInputImage, saveImage } from '../business/fileManager.js'
 import { validateBase64Image, validateGenerateImageParams } from '../business/inputValidator.js'
@@ -45,20 +45,7 @@ import {
   type ImageProviderDefinition,
 } from './imageProviderRegistry.js'
 
-function readPackageVersion(): string {
-  const manifest: unknown = JSON.parse(
-    readFileSync(new URL('../../package.json', import.meta.url), 'utf8')
-  )
-  if (typeof manifest === 'object' && manifest !== null && 'version' in manifest) {
-    const { version } = manifest
-    if (typeof version === 'string') {
-      return version
-    }
-  }
-  throw new Error('package.json does not declare a string version')
-}
-
-const PACKAGE_VERSION = readPackageVersion()
+const PACKAGE_VERSION = packageJson.version
 
 const DEFAULT_CONFIG: MCPServerConfig = {
   name: 'mcp-image-server',
